@@ -8,6 +8,7 @@ Boto3 Version: 1.7.50
 """
 
 import boto3
+import click
 from botocore.exceptions import ClientError
 
 
@@ -179,8 +180,21 @@ def get_regions(ec2):
 
   return regions
 
+def check_cidr_for_default(vpc_id):
+  default_cidr_range = '172.31.0.0/16'
+  response = ec2.describe_vpcs(
+      VpcIds=[
+          vpc_id,
+      ]
+  )
+  cidr_range = response['Vpcs'][0]['CidrBlock']
 
-def main(profile):
+  if cidr_range == default_cidr_range:
+    return True
+  else:
+    return False
+
+def main(profile, dry_run):
   """
   Do the work..
 
@@ -219,38 +233,45 @@ def main(profile):
       print('VPC (default) was not found in the {} region.'.format(region))
       continue
 
-    # Are there any existing resources?  Since most resources attach an ENI, let's check..
+    if check_cidr_for_default(vpc_id):
 
-    args = {
-      'Filters' : [
-        {
-          'Name' : 'vpc-id',
-          'Values' : [ vpc_id ]
-        }
-      ]
-    }
 
-    try:
-      eni = ec2.describe_network_interfaces(**args)['NetworkInterfaces']
-    except ClientError as e:
-      print(e.response['Error']['Message'])
-      return
+      # Are there any existing resources?  Since most resources attach an ENI, let's check..
 
-    if eni:
-      print('VPC {} has existing resources in the {} region.'.format(vpc_id, region))
-      continue
+      args = {
+        'Filters' : [
+          {
+            'Name' : 'vpc-id',
+            'Values' : [ vpc_id ]
+          }
+        ]
+      }
 
-    result = delete_igw(ec2, vpc_id)
-    result = delete_subs(ec2, args)
-    result = delete_rtbs(ec2, args)
-    result = delete_acls(ec2, args)
-    result = delete_sgps(ec2, args)
-    result = delete_vpc(ec2, vpc_id, region)
+      try:
+        eni = ec2.describe_network_interfaces(**args)['NetworkInterfaces']
+      except ClientError as e:
+        print(e.response['Error']['Message'])
+        return
 
-  return
+      if eni:
+        print('VPC {} has existing resources in the {} region.'.format(vpc_id, region))
+        continue
+      if not dry_run:
+        result = delete_igw(ec2, vpc_id)
+        result = delete_subs(ec2, args)
+        result = delete_rtbs(ec2, args)
+        result = delete_acls(ec2, args)
+        result = delete_sgps(ec2, args)
+        result = delete_vpc(ec2, vpc_id, region)
+      else:
+        click.echo("Skipped VPC Deletion")
+    return
 
+@click.option('-p', '--profile', required=True, prompt=True)
+@click.option('--dry_run/--no_dry_run', required = True, prompt = True, default=True)
+def cli(profile): 
+  main()
 
 if __name__ == "__main__":
-
-  main(profile = '<YOUR_PROFILE>')
+  cli()
 
